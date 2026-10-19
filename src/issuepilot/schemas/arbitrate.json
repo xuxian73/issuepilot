@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "decision": {"type": "string", "enum": ["merge", "replan"]},
+    "reason": {"type": "string", "description": "Why this decision was made"},
+    "new_body": {"type": "string", "description": "New issue body for replan; empty string for merge"}
+  },
+  "required": ["decision", "reason", "new_body"],
+  "additionalProperties": false
+}

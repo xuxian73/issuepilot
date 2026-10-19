@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "issuepilot"
+version = "0.1.0"
+description = "Turn a spec into GitHub issues, then build, review and merge them with Claude Code and Codex."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "heiyan-2020" }]
+keywords = ["agents", "github", "claude-code", "codex", "automation", "code-review"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Build Tools",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dashboard = ["rich>=13"]
+dev = ["pytest>=8", "rich>=13"]
+
+[project.scripts]
+issuepilot = "issuepilot.cli:main"
+
+[project.urls]
+Repository = "https://github.com/heiyan-2020/issuepilot"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/issuepilot"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

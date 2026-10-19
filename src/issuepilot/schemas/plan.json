@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {"type": "string", "description": "Short id inside this plan, e.g. scaffold, auth"},
+          "title": {"type": "string"},
+          "body": {"type": "string", "description": "Markdown issue body"},
+          "depends_on": {"type": "array", "items": {"type": "string"}, "description": "Keys of earlier issues in this plan"}
+        },
+        "required": ["key", "title", "body", "depends_on"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["issues"],
+  "additionalProperties": false
+}

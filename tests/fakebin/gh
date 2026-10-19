@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""A tiny stand-in for the GitHub CLI, enough for issuepilot's tests.
+
+State lives in the JSON file $FAKE_GH_STATE. `pr merge` really squash-merges into the bare repository
+$FAKE_ORIGIN, so the orchestrator sees the merge on its next fetch.
+"""
+
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+STATE = os.environ["FAKE_GH_STATE"]
+ORIGIN = os.environ.get("FAKE_ORIGIN", "")
+REPO = "acme/widgets"
+
+
+def load():
+    if os.path.exists(STATE):
+        with open(STATE) as f:
+            return json.load(f)
+    return {"next": 1, "issues": {}, "prs": {}, "labels": {}, "checks": {}, "calls": []}
+
+
+def opts(args, multi=("--label", "--add-label", "--remove-label")):
+    out, pos, i = {}, [], 0
+    while i < len(args):
+        a = args[i]
+        if a.startswith("--") and a not in ("--force", "--squash", "--log-failed", "--exit-code"):
+            v = args[i + 1]
+            out.setdefault(a, []).append(v) if a in multi else out.__setitem__(a, v)
+            i += 2
+        elif a.startswith("--"):
+            out[a] = True
+            i += 1
+        else:
+            pos.append(a)
+            i += 1
+    return out, pos
+
+
+def body_from(o):
+    return sys.stdin.read() if o.get("--body-file") == "-" else o.get("--body", "")
+
+
+def view(obj, fields):
+    out = {}
+    for f in fields.split(","):
+        if f == "labels":
+            out[f] = [{"name": n} for n in obj["labels"]]
+        elif f == "comments":
+            out[f] = [{"body": b} for b in obj["comments"]]
+        elif f == "reviews":
+            out[f] = []
+        else:
+            out[f] = obj.get(f)
+    return out
+
+
+def listing(items, o):
+    state = o.get("--state", "open").upper()
+    res = [x for x in items.values() if state == "ALL" or x["state"] == state
+           or (state == "CLOSED" and x["state"] == "MERGED")]
+    for l in o.get("--label", []):
+        res = [x for x in res if l in x["labels"]]
+    res.sort(key=lambda x: -x["number"])
+    return [view(x, o["--json"]) for x in res[: int(o.get("--limit", 30))]]
+
+
+def edit_labels(obj, o, s):
+    for l in o.get("--add-label", []):
+        if l not in s["labels"]:
+            sys.exit(f"could not add label: '{l}' not found")
+        if l not in obj["labels"]:
+            obj["labels"].append(l)
+    for l in o.get("--remove-label", []):
+        if l in obj["labels"]:
+            obj["labels"].remove(l)
+
+
+def git(*args, cwd=None):
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+
+
+def squash_merge(pr):
+    with tempfile.TemporaryDirectory() as d:
+        git("clone", "-q", ORIGIN, d)
+        git("config", "user.email", "gh@example.com", cwd=d)
+        git("config", "user.name", "gh", cwd=d)
+        git("checkout", "-q", pr["baseRefName"], cwd=d)
+        git("merge", "--squash", f"origin/{pr['headRefName']}", cwd=d)
+        git("commit", "-q", "-m", f"{pr['title']} (#{pr['number']})", cwd=d)
+        git("push", "-q", "origin", pr["baseRefName"], cwd=d)
+
+
+def main(argv):
+    with open(STATE + ".lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        s = load()
+        s["calls"].append(argv)
+        out = run(s, argv)
+        with open(STATE, "w") as f:
+            json.dump(s, f)
+    if out is not None:
+        print(out if isinstance(out, str) else json.dumps(out))
+
+
+def run(s, argv):
+    group, cmd, rest = argv[0], argv[1] if len(argv) > 1 else "", argv[2:]
+    o, pos = opts(rest)
+    if group == "auth":
+        return "Logged in to github.com"
+    if group == "repo" and cmd == "view":
+        return {"nameWithOwner": REPO}
+    if group == "label":
+        if cmd == "create":
+            s["labels"][pos[0]] = {"color": o.get("--color"), "description": o.get("--description")}
+            return None
+        if cmd == "list":
+            return [{"name": n} for n in s["labels"]]
+    if group in ("issue", "pr"):
+        items = s["issues"] if group == "issue" else s["prs"]
+        if cmd == "list":
+            return listing(items, o)
+        if cmd == "create":
+            n = s["next"]
+            s["next"] += 1
+            for l in o.get("--label", []):
+                if l not in s["labels"]:
+                    sys.exit(f"could not add label: '{l}' not found")
+            obj = {"number": n, "title": o["--title"], "body": body_from(o), "state": "OPEN",
+                   "labels": list(o.get("--label", [])), "comments": []}
+            if group == "pr":
+                obj.update(headRefName=o["--head"], baseRefName=o["--base"], mergeable="MERGEABLE")
+            items[str(n)] = obj
+            return f"https://github.com/{REPO}/{'issues' if group == 'issue' else 'pull'}/{n}"
+        obj = items.get(pos[0]) if pos else None
+        if obj is None:
+            sys.exit(f"GraphQL: Could not resolve to an issue or pull request with the number of {pos}.")
+        if cmd == "view":
+            return view(obj, o["--json"])
+        if cmd == "edit":
+            edit_labels(obj, o, s)
+            if "--body-file" in o:
+                obj["body"] = body_from(o)
+            return None
+        if cmd == "comment":
+            obj["comments"].append(body_from(o))
+            return None
+        if group == "pr" and cmd == "checks":
+            return s["checks"].get(pos[0], [])
+        if group == "pr" and cmd == "merge":
+            squash_merge(obj)
+            obj["state"] = "MERGED"
+            for m in re.findall(r"Closes #(\d+)", obj["body"]):
+                s["issues"][m]["state"] = "CLOSED"
+            return None
+        if group == "pr" and cmd == "close":
+            obj["state"] = "CLOSED"
+            return None
+    sys.exit(f"fake gh: unsupported command {argv}")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

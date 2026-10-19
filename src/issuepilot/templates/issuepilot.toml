@@ -1,0 +1,34 @@
+# issuepilot configuration. Every key is optional; the values below are the defaults.
+# Any scalar key can be overridden with an environment variable, e.g. ISSUEPILOT_AUTO_MERGE=1.
+
+spec = "docs/spec.md"            # the requirements the planner splits into issues
+conventions = "AGENTS.md"        # project rules every agent reads first
+check = "./scripts/check.sh"     # shell command that must pass before a PR is opened (tests, type checks…)
+base_branch = "main"
+language = "$language"                # "en" or "zh": prompts, GitHub comments and logs
+# state_dir = ".issuepilot"      # logs and worktrees, kept out of git automatically
+# prompts_dir = ""               # a directory with your own <name>.md prompts to replace the built-in ones
+
+[automation]
+auto_merge = false     # merge a PR as soon as the review passes
+auto_ready = false     # let issues created by triage start without approval
+max_in_flight = 1      # issues worked on at the same time
+max_fix_rounds = 3     # after this many fix rounds the planner arbitrates: merge, or rewrite the issue
+max_check_retries = 2  # times the builder may retry a failing check before giving up
+max_triaged_issues = 8 # upper limit for issues auto-approved by triage (only with auto_ready)
+poll_seconds = 60      # how often to poll GitHub when idle
+agent_timeout = 3600   # seconds per agent call
+check_timeout = 1800   # seconds per check run
+ci_timeout = 1800      # seconds to wait for GitHub CI on the latest commit
+
+[agents]
+# cli is "claude" (Claude Code) or "codex" (Codex CLI). An empty model means the CLI's default.
+planner = { cli = "claude", model = "opus" }
+builder = { cli = "claude", model = "" }
+reviewer = { cli = "codex", model = "" }
+
+[notes]
+# Extra project-specific text appended to a prompt. Keys: plan, triage, build, checkfail, fix, review, arbitrate.
+# review = """
+# - Every API route must check the caller's role.
+# """

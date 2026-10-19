@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "properties": {
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "index": {"type": "integer", "description": "1-based index of the proposal"},
+          "action": {"type": "string", "enum": ["create", "duplicate", "drop"]},
+          "duplicate_of": {"type": ["integer", "null"]},
+          "title": {"type": "string"},
+          "body": {"type": "string"},
+          "reason": {"type": "string"}
+        },
+        "required": ["index", "action", "duplicate_of", "title", "body", "reason"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["decisions"],
+  "additionalProperties": false
+}
