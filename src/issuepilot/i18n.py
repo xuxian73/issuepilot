@@ -38,6 +38,7 @@ MESSAGES = {
         "log.deps": " (depends on {deps})",
         "log.plan_done": "Review the issues, then run `issuepilot approve <numbers…>` or set the label "
                          "agent:ready on GitHub. Builders start only after that.",
+        "log.plan_done_auto": "The issues are labeled agent:ready. `issuepilot run` builds them in dependency order.",
         "log.resume": "resuming interrupted issue #{n}",
         "log.reload": "issuepilot code or config changed, restarting",
         # errors (posted as comments)
@@ -127,6 +128,7 @@ MESSAGES = {
         "log.deps": "（依赖 {deps}）",
         "log.plan_done": "看过 issue 后，用 `issuepilot approve <编号…>` 或在 GitHub 上把标签改成 agent:ready，"
                          "builder 才会开始。",
+        "log.plan_done_auto": "issue 已标为 agent:ready，`issuepilot run` 会按依赖顺序开发。",
         "log.resume": "恢复中断的 issue #{n}",
         "log.reload": "issuepilot 代码或配置已更新，重启调度器",
         "err.check_failed": "重试 {n} 次后 `{check}` 仍未通过：\n```\n{out}\n```",

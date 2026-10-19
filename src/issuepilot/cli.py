@@ -39,8 +39,8 @@ def cmd_init(args):
           "  1. Edit .issuepilot.toml and AGENTS.md, and write your spec (default docs/spec.md).\n"
           "  2. issuepilot doctor      # check tools, login and repository setup\n"
           "  3. issuepilot setup       # create the agent:* labels on GitHub\n"
-          "  4. issuepilot plan        # the planner opens issues labeled agent:planned\n"
-          "  5. issuepilot approve N…  # then: issuepilot run")
+          "  4. issuepilot plan        # the planner opens issues\n"
+          "  5. issuepilot run         # builds, reviews and merges them; watch with: issuepilot dashboard")
 
 
 def cmd_doctor(_):
@@ -101,10 +101,10 @@ def main(argv=None):
     p.set_defaults(fn=cmd_init)
     sub.add_parser("doctor", help="check tools, login and repository setup").set_defaults(fn=cmd_doctor)
     sub.add_parser("setup", help="create the agent:* labels in the GitHub repository").set_defaults(fn=cmd_setup)
-    p = sub.add_parser("plan", help="let the planner split the spec into issues (labeled agent:planned)")
+    p = sub.add_parser("plan", help="let the planner split the spec into issues")
     p.add_argument("--spec", help="spec file, relative to the repository root (default: `spec` in the config)")
     p.set_defaults(fn=cmd_plan)
-    p = sub.add_parser("approve", help="move issues from agent:planned to agent:ready")
+    p = sub.add_parser("approve", help="move issues from agent:planned to agent:ready (when auto_ready is off)")
     p.add_argument("issues", nargs="+", type=int)
     p.set_defaults(fn=cmd_approve)
     p = sub.add_parser("run", help="run the build/review loop")

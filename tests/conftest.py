@@ -14,8 +14,6 @@ check = "true"
 language = "{language}"
 
 [automation]
-auto_merge = true
-auto_ready = true
 poll_seconds = 1
 """
 

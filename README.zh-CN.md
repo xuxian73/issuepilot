@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-issuepilot 把一份需求文档拆成 GitHub issue，再用编程 agent 开发、审查、合并。它在你自己的机器上运行，可以无人值守。
+issuepilot 把一份需求文档拆成 GitHub issue，再用编程 agent 开发、审查、合并。它在你自己的机器上运行，默认全自动：不需要任何人确认或合并。
 
 - **planner**（默认 Claude Code）：把需求拆成 issue；分诊 agent 在开发和审查中发现的新问题。
 - **builder**（Claude Code）：在每个 issue 专用的 git worktree 里实现功能，按审查意见修复。
@@ -13,7 +13,7 @@ issuepilot 把一份需求文档拆成 GitHub issue，再用编程 agent 开发�
 ## 流程
 
 ```
-plan ─▶ issue: agent:planned ──(approve)──▶ agent:ready ──▶ agent:building
+plan ─▶ issue: agent:ready ─────────────────────────▶ agent:building
                                                               │ builder 实现，检查通过
                                                               ▼
                               PR: agent:reviewing  round:0 ◀──────────┐
@@ -57,11 +57,8 @@ issuepilot init --language zh  # 生成 .issuepilot.toml；没有 AGENTS.md 时�
 $EDITOR .issuepilot.toml AGENTS.md docs/spec.md
 issuepilot doctor              # 检查工具、登录、远程仓库、标签、检查命令
 issuepilot setup               # 在 GitHub 上创建 agent:* 标签
-issuepilot plan                # planner 创建 issue，打 agent:planned
-# 在 GitHub 上看一遍 issue，需要的话直接修改，然后：
-issuepilot approve 1 2 3
-issuepilot run --once          # 先只跑一轮，观察效果
-issuepilot run                 # 循环运行，Ctrl-C 停止
+issuepilot plan                # planner 创建 issue，可以直接开发
+issuepilot run                 # 开发、审查、合并，Ctrl-C 停止
 issuepilot dashboard           # 在另一个终端里看进度
 ```
 
@@ -82,12 +79,12 @@ issuepilot dashboard           # 在另一个终端里看进度
 | `language` | `en` | `en` 或 `zh`：提示词、GitHub 评论、日志和看板的语言 |
 | `state_dir` | `.issuepilot` | 日志和 worktree 的目录 |
 | `prompts_dir` | （无） | 放自定义 `<名字>.md` 提示词的目录，同名的会替换内置提示词 |
-| `automation.auto_merge` | `false` | 审查通过后直接 squash 合并 |
-| `automation.auto_ready` | `false` | 分诊新建的 issue 不用确认就开始开发 |
+| `automation.auto_merge` | `true` | 审查通过后直接 squash 合并。`false`：打 `agent:approved`，等人合并 |
+| `automation.auto_ready` | `true` | `plan` 和分诊建的 issue 直接开始开发。`false`：打 `agent:planned`，等 `issuepilot approve` |
 | `automation.max_in_flight` | `1` | 同时推进几个 issue |
 | `automation.max_fix_rounds` | `3` | 修复几轮后交给 planner 仲裁 |
 | `automation.max_check_retries` | `2` | 检查失败后 builder 最多重试几次 |
-| `automation.max_triaged_issues` | `8` | 分诊最多自动放行几个 issue |
+| `automation.max_triaged_issues` | `8` | 分诊最多自己新建并启动几个 issue |
 | `automation.poll_seconds` | `60` | 空闲时多久查一次 GitHub |
 | `automation.agent_timeout` | `3600` | 单次 agent 调用的超时（秒） |
 | `automation.check_timeout` | `1800` | 单次检查的超时（秒） |
@@ -110,15 +107,15 @@ review = """
 plan = "第一个 issue 搭好 `backend/`（Fastify）和 `miniprogram/` 的骨架。"
 ```
 
-### 全自动模式
+### 加上人工确认
+
+issuepilot 默认全自动：`plan` 建的 issue 直接开始开发，审查通过就合并，分诊最多可以自己新建并启动 `max_triaged_issues` 个 issue。挡住坏代码靠的是检查命令和 CI，所以它们要写得严格，事后也要读一遍合并记录。想自己确认 issue、自己合并 PR 时：
 
 ```toml
 [automation]
-auto_merge = true
-auto_ready = true
+auto_merge = false   # 审查通过的 PR 打 agent:approved，等你合并
+auto_ready = false   # 新 issue 打 agent:planned，等你 `issuepilot approve <编号…>`
 ```
-
-两个都打开后，`issuepilot approve` 之后就不需要任何人确认：审查通过就合并，分诊最多可以新建并启动 `max_triaged_issues` 个 issue。只有在你信得过检查命令和 CI 时才这样用，事后要读一遍合并记录。
 
 ## agent 能做什么
 

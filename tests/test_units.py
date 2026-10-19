@@ -27,7 +27,7 @@ def git_root(tmp_path):
 
 def test_defaults_without_a_file(git_root):
     cfg = config.load(git_root, env={}, require_file=False)
-    assert (cfg.check, cfg.auto_merge, cfg.max_in_flight) == ("./scripts/check.sh", False, 1)
+    assert (cfg.check, cfg.auto_merge, cfg.max_in_flight) == ("./scripts/check.sh", True, 1)
     assert cfg.planner == Agent("claude", "opus") and cfg.reviewer == Agent("codex", "")
     assert cfg.worktrees == git_root / ".issuepilot" / "worktrees"
 
@@ -39,11 +39,11 @@ def test_missing_file_is_an_error_by_default(git_root):
 
 def test_file_and_env_overrides(git_root):
     (git_root / ".issuepilot.toml").write_text(
-        'check = "make test"\nlanguage = "zh"\n[automation]\nauto_merge = true\nmax_in_flight = 3\n'
+        'check = "make test"\nlanguage = "zh"\n[automation]\nauto_merge = false\nmax_in_flight = 3\n'
         '[agents]\nplanner = { cli = "codex" }\nbuilder = { model = "sonnet" }\n[notes]\nreview = "check roles"\n')
-    cfg = config.load(git_root, env={"ISSUEPILOT_MAX_IN_FLIGHT": "5", "ISSUEPILOT_AUTO_MERGE": "0",
+    cfg = config.load(git_root, env={"ISSUEPILOT_MAX_IN_FLIGHT": "5", "ISSUEPILOT_AUTO_READY": "0",
                                      "ISSUEPILOT_REVIEWER_MODEL": "o9"})
-    assert (cfg.check, cfg.language, cfg.auto_merge, cfg.max_in_flight) == ("make test", "zh", False, 5)
+    assert (cfg.check, cfg.language, cfg.auto_merge, cfg.auto_ready, cfg.max_in_flight) == ("make test", "zh", False, False, 5)
     assert cfg.planner == Agent("codex", "")  # switching CLI drops the other CLI's default model
     assert cfg.builder == Agent("claude", "sonnet")
     assert cfg.reviewer == Agent("codex", "o9")

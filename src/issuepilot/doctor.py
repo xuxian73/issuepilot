@@ -79,10 +79,9 @@ def checks():
     workflows = root / ".github" / "workflows"
     if not any(workflows.glob("*.y*ml")):
         yield WARN, "no GitHub Actions workflow: PRs go to review without a CI check on a clean machine"
-    if cfg.auto_merge:
-        yield WARN, "auto_merge is on: PRs merge with no human review"
-    if cfg.auto_ready:
-        yield WARN, "auto_ready is on: issues created by triage start without approval"
+    gates = [g for g, on in (("merging PRs", not cfg.auto_merge), ("starting issues", not cfg.auto_ready)) if on]
+    yield OK, ("fully automatic: no human approval needed" if not gates
+               else f"waits for a human before {' and '.join(gates)}")
     try:
         import rich  # noqa: F401
     except ImportError:

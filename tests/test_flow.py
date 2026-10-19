@@ -1,14 +1,14 @@
 """End-to-end runs of the loop against fake gh, claude and codex."""
 
 
-def plan_and_approve(repo):
+def plan_issues(repo):
     repo.cli("setup")
     repo.cli("plan")
-    repo.cli("approve", "1", "2")
+    assert all("agent:ready" in repo.issue(n)["labels"] for n in (1, 2))  # auto_ready is on by default
 
 
 def test_issues_merge_in_dependency_order(repo):
-    plan_and_approve(repo)
+    plan_issues(repo)
     assert "Depends on: #1" in repo.issue(2)["body"]
     out = repo.run_until(lambda: repo.issue(2)["state"] == "CLOSED")
     assert repo.issue(1)["state"] == "CLOSED"
@@ -27,7 +27,7 @@ def test_issues_merge_in_dependency_order(repo):
 
 def test_review_rejection_goes_through_a_fix_round(repo):
     repo.script(reject_rounds=1)
-    plan_and_approve(repo)
+    plan_issues(repo)
     repo.run_until(lambda: repo.issue(1)["state"] == "CLOSED")
     pr = repo.pr(3)
     assert pr["state"] == "MERGED"
@@ -40,7 +40,7 @@ def test_review_rejection_goes_through_a_fix_round(repo):
 
 def test_planner_arbitrates_after_max_fix_rounds(repo):
     repo.script(reject_rounds=99)
-    plan_and_approve(repo)
+    plan_issues(repo)
     repo.run_until(lambda: repo.issue(1)["state"] == "CLOSED", env={"ISSUEPILOT_MAX_FIX_ROUNDS": "1"})
     pr = repo.pr(3)
     assert any(c.startswith("<!-- agent:arbitrate -->") and "Planner arbitration: merge" in c for c in pr["comments"])
@@ -49,7 +49,7 @@ def test_planner_arbitrates_after_max_fix_rounds(repo):
 
 def test_arbitration_replan_rewrites_issue_and_restarts(repo):
     repo.script(reject_rounds=99, arbitrate="replan")
-    plan_and_approve(repo)
+    plan_issues(repo)
     env = {"ISSUEPILOT_MAX_FIX_ROUNDS": "0"}
     repo.run_until(lambda: "agent:replanned" in repo.issue(1)["labels"], env=env)
     assert repo.pr(3)["state"] == "CLOSED"
@@ -60,7 +60,7 @@ def test_arbitration_replan_rewrites_issue_and_restarts(repo):
 
 def test_build_error_is_retried_once_then_needs_human(repo):
     repo.script(fail_build=True)
-    plan_and_approve(repo)
+    plan_issues(repo)
     repo.cli("run", "--once", "--no-reload")
     assert {"agent:ready", "agent:retried"} <= set(repo.issue(1)["labels"])
     repo.cli("run", "--once", "--no-reload")
@@ -69,7 +69,7 @@ def test_build_error_is_retried_once_then_needs_human(repo):
 
 
 def test_failing_check_is_fed_back_to_the_builder(repo):
-    plan_and_approve(repo)
+    plan_issues(repo)
     # passes only once the builder has committed twice (the second commit comes from the check-fix call)
     env = {"ISSUEPILOT_CHECK": '[ "$(ls feature-* | wc -l)" -ge 2 ]'}
     repo.run_until(lambda: repo.issue(1)["state"] == "CLOSED", env=env)
@@ -78,7 +78,7 @@ def test_failing_check_is_fed_back_to_the_builder(repo):
 
 
 def test_manual_mode_waits_for_a_human_merge(repo):
-    plan_and_approve(repo)
+    plan_issues(repo)
     env = {"ISSUEPILOT_AUTO_MERGE": "0"}
     repo.run_until(lambda: "agent:approved" in repo.gh()["prs"].get("3", {}).get("labels", []), env=env)
     repo.cli("run", "--once", "--no-reload", env=env)
@@ -90,7 +90,7 @@ def test_triage_creates_and_auto_approves_issues(repo):
     repo.script(proposals=[{"title": "Rate limit", "description": "login has none"}],
                 triage=[{"index": 1, "action": "create", "duplicate_of": None, "title": "Add rate limit",
                          "body": "Background\n\nAdd it.", "reason": "security"}])
-    plan_and_approve(repo)
+    plan_issues(repo)
     repo.cli("run", "--once", "--no-reload")
     created = [i for i in repo.gh()["issues"].values() if i["title"] == "Add rate limit"]
     assert len(created) == 1
@@ -102,14 +102,14 @@ def test_triage_without_auto_ready_waits_for_approval(repo):
     repo.script(proposals=[{"title": "x", "description": "y"}],
                 triage=[{"index": 1, "action": "create", "duplicate_of": None, "title": "Do x",
                          "body": "b", "reason": "r"}])
-    plan_and_approve(repo)
+    plan_issues(repo)
     repo.cli("run", "--once", "--no-reload", env={"ISSUEPILOT_AUTO_READY": "0"})
     created = next(i for i in repo.gh()["issues"].values() if i["title"] == "Do x")
     assert created["labels"] == ["agent:planned"]
 
 
 def test_agents_get_the_right_permissions(repo):
-    plan_and_approve(repo)
+    plan_issues(repo)
     repo.run_until(lambda: repo.issue(1)["state"] == "CLOSED")
     calls = repo.agent_calls()
     planner = next(c for c in calls if c["cli"] == "claude" and "You are the planner" in c["prompt"])
@@ -125,7 +125,7 @@ def test_agents_get_the_right_permissions(repo):
 
 def test_chinese_comments_and_prompts(repo_zh):
     repo = repo_zh
-    plan_and_approve(repo)
+    plan_issues(repo)
     repo.run_until(lambda: repo.issue(1)["state"] == "CLOSED")
     assert any("第 1 轮：✅ 通过" in c for c in repo.pr(3)["comments"])
     assert any("你是 builder" in c["prompt"] for c in repo.agent_calls())
@@ -133,7 +133,7 @@ def test_chinese_comments_and_prompts(repo_zh):
 
 
 def test_interrupted_build_is_resumed(repo):
-    plan_and_approve(repo)
+    plan_issues(repo)
     repo.gh()  # labels exist; simulate a crash mid-build
     import json
     s = repo.gh()
@@ -149,7 +149,9 @@ def test_doctor_passes_with_tools_installed(repo):
     p = repo.cli("doctor", check=False)
     assert p.returncode == 0, p.stdout
     assert "[  ok] GitHub repository: acme/widgets" in p.stdout
-    assert "auto_merge is on" in p.stdout
+    assert "fully automatic" in p.stdout
+    p = repo.cli("doctor", env={"ISSUEPILOT_AUTO_MERGE": "0"})
+    assert "waits for a human before merging PRs" in p.stdout
 
 
 def test_init_writes_config_and_conventions(tmp_path):
@@ -166,7 +168,6 @@ def test_init_writes_config_and_conventions(tmp_path):
 def test_dependencies_hold_back_parallel_lanes(repo):
     repo.cli("setup")
     repo.cli("plan")
-    repo.cli("approve", "1", "2")
     out = repo.cli("run", "--once", "--no-reload", env={"ISSUEPILOT_MAX_IN_FLIGHT": "2"}).stdout
     assert "#2 is waiting for [1]" in out
     assert "agent:ready" in repo.issue(2)["labels"] and "agent:in-pr" in repo.issue(1)["labels"]
@@ -177,8 +178,18 @@ def test_independent_issues_build_in_parallel(repo):
                       {"key": "b", "title": "B", "body": "b", "depends_on": []}])
     repo.cli("setup")
     repo.cli("plan")
-    repo.cli("approve", "1", "2")
     repo.cli("run", "--once", "--no-reload", env={"ISSUEPILOT_MAX_IN_FLIGHT": "2"})
     assert all("agent:in-pr" in repo.issue(n)["labels"] for n in (1, 2))
     repo.run_until(lambda: all(repo.issue(n)["state"] == "CLOSED" for n in (1, 2)),
                    env={"ISSUEPILOT_MAX_IN_FLIGHT": "2"})
+
+
+def test_without_auto_ready_planned_issues_wait_for_approve(repo):
+    env = {"ISSUEPILOT_AUTO_READY": "0"}
+    repo.cli("setup")
+    assert "issuepilot approve" in repo.cli("plan", env=env).stdout
+    assert repo.issue(1)["labels"] == ["agent:planned"]
+    repo.cli("run", "--once", "--no-reload", env=env)
+    assert repo.gh()["prs"] == {}
+    repo.cli("approve", "1", "2")
+    repo.run_until(lambda: repo.issue(1)["state"] == "CLOSED", env=env)

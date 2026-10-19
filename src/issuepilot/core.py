@@ -688,11 +688,11 @@ def cmd_plan(spec):
     for it in plan["issues"]:
         deps = [f"#{numbers[k]}" for k in it["depends_on"] if k in numbers]
         body = it["body"] + (f"\n\n---\nDepends on: {', '.join(deps)}" if deps else "")
-        url = gh("issue", "create", "--title", it["title"], "--label", "agent:planned",
+        url = gh("issue", "create", "--title", it["title"], "--label", "agent:ready" if CFG.auto_ready else "agent:planned",
                  "--body-file", "-", input=body).strip()
         numbers[it["key"]] = int(url.rstrip("/").rsplit("/", 1)[1])
         log(t("log.created", url=url, title=it["title"]) + (t("log.deps", deps=", ".join(deps)) if deps else ""))
-    log(t("log.plan_done"))
+    log(t("log.plan_done_auto" if CFG.auto_ready else "log.plan_done"))
     return list(numbers.values())
 
 

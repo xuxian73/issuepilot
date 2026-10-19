@@ -3,7 +3,7 @@
 [中文说明](README.zh-CN.md)
 
 issuepilot turns a written spec into GitHub issues, then builds, reviews and merges them with coding agents.
-It runs unattended on your own machine.
+It runs unattended on your own machine: by default nobody needs to approve or merge anything.
 
 - **Planner** (Claude Code by default) splits the spec into issues and triages new problems the agents find.
 - **Builder** (Claude Code) implements each issue in its own git worktree and fixes review findings.
@@ -16,7 +16,7 @@ PR, comment and label change.
 ## How it works
 
 ```
-plan ─▶ issue: agent:planned ──(approve)──▶ agent:ready ──▶ agent:building
+plan ─▶ issue: agent:ready ─────────────────────────▶ agent:building
                                                               │ builder implements, check passes
                                                               ▼
                               PR: agent:reviewing  round:0 ◀──────────┐
@@ -71,11 +71,8 @@ issuepilot init                # writes .issuepilot.toml, and AGENTS.md if it do
 $EDITOR .issuepilot.toml AGENTS.md docs/spec.md
 issuepilot doctor              # checks tools, login, remote, labels, check command
 issuepilot setup               # creates the agent:* labels on GitHub
-issuepilot plan                # the planner opens issues labeled agent:planned
-# read the issues on GitHub and edit them if needed, then:
-issuepilot approve 1 2 3
-issuepilot run --once          # one round, to watch what happens
-issuepilot run                 # the loop; Ctrl-C to stop
+issuepilot plan                # the planner opens issues, ready to build
+issuepilot run                 # builds, reviews and merges them; Ctrl-C to stop
 issuepilot dashboard           # in a second terminal
 ```
 
@@ -98,12 +95,12 @@ issues and creates issues only for the gap.
 | `language` | `en` | `en` or `zh`: prompts, GitHub comments, logs and the dashboard |
 | `state_dir` | `.issuepilot` | Logs and worktrees |
 | `prompts_dir` | (none) | Directory with your own `<name>.md` prompts that replace the built-in ones |
-| `automation.auto_merge` | `false` | Merge (squash) as soon as the review passes |
-| `automation.auto_ready` | `false` | Issues created by triage start without approval |
+| `automation.auto_merge` | `true` | Merge (squash) as soon as the review passes. `false`: label `agent:approved` and wait for a human to merge |
+| `automation.auto_ready` | `true` | Issues from `plan` and triage start right away. `false`: label `agent:planned` and wait for `issuepilot approve` |
 | `automation.max_in_flight` | `1` | Issues worked on at the same time |
 | `automation.max_fix_rounds` | `3` | Fix rounds before the planner arbitrates |
 | `automation.max_check_retries` | `2` | Times the builder may retry a failing check |
-| `automation.max_triaged_issues` | `8` | Upper limit for issues auto-approved by triage |
+| `automation.max_triaged_issues` | `8` | Upper limit for issues triage may create and start on its own |
 | `automation.poll_seconds` | `60` | GitHub polling interval when idle |
 | `automation.agent_timeout` | `3600` | Seconds per agent call |
 | `automation.check_timeout` | `1800` | Seconds per check run |
@@ -128,17 +125,17 @@ review = """
 plan = "The first issue sets up `backend/` (Fastify) and `miniprogram/`."
 ```
 
-### Fully unattended mode
+### Adding human gates
+
+issuepilot is fully automatic by default: issues from `plan` start right away, PRs merge when the review passes,
+and triage can create and start up to `max_triaged_issues` new issues. The check command and CI are what keep bad
+code out, so make them strict, and read the merged history afterwards. To approve issues and merge PRs yourself:
 
 ```toml
 [automation]
-auto_merge = true
-auto_ready = true
+auto_merge = false   # approved PRs get agent:approved and wait for you to merge
+auto_ready = false   # new issues get agent:planned and wait for `issuepilot approve <numbers…>`
 ```
-
-With both on, nobody needs to approve anything after `issuepilot approve`: PRs merge when the review passes,
-and triage can create and start up to `max_triaged_issues` new issues. Use this only when you trust your check
-command and CI, and read the merged history afterwards.
 
 ## What the agents can do
 

@@ -38,8 +38,8 @@ class Config:
     state_dir: str = ".issuepilot"
     prompts_dir: str = ""
     # [automation]
-    auto_merge: bool = False
-    auto_ready: bool = False
+    auto_merge: bool = True
+    auto_ready: bool = True
     max_in_flight: int = 1
     max_fix_rounds: int = 3
     max_check_retries: int = 2
