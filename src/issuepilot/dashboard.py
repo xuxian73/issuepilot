@@ -8,6 +8,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from collections import deque
 from datetime import datetime
@@ -40,6 +41,7 @@ TEXT = {
         "timeout": "timed out", "unknown_error": "unknown error",
         "stale": "showing data from {s}s ago", "not_loaded": "no data yet", "gh_failed": "GitHub refresh failed, {stale}: {e}",
         "no_agents": "No agent is running.", "agent": "agent", "repo_root": "repository root",
+        "process_unknown": "● process status unavailable", "process_unavailable": "Process monitoring is unavailable; issue states and logs are still shown.",
         "running_for": "running {age}", "running_check": "running checks", "commits": "{n} commit(s)",
         "no_diff": "no diff", "dirty": "uncommitted files {n}", "todos": "Todos", "recent": "Recent actions",
         "no_transcript": "(no transcript found yet)", "log": "Loop log", "no_log": "(no log yet)",
@@ -54,6 +56,7 @@ TEXT = {
         "timeout": "超时", "unknown_error": "未知错误",
         "stale": "显示的是 {s}s 前的数据", "not_loaded": "还没拉到数据", "gh_failed": "GitHub 拉取失败，{stale}：{e}",
         "no_agents": "现在没有 agent 在运行。", "agent": "当前 agent", "repo_root": "仓库根目录",
+        "process_unknown": "● 进程状态未知", "process_unavailable": "进程检测暂不可用；仍可查看任务状态和调度器日志。",
         "running_for": "已运行 {age}", "running_check": "正在跑检查", "commits": "提交 {n} 个",
         "no_diff": "与基础分支无差异", "dirty": "未提交文件 {n}", "todos": "待办", "recent": "最近动作",
         "no_transcript": "（还没找到会话记录）", "log": "调度器日志", "no_log": "（还没有日志）",
@@ -163,45 +166,142 @@ def _inside_repo(path):
     return path == root or path.startswith(root + "/")
 
 
-def running_agents():
-    """Find the `claude -p` and `codex exec` processes (and check runs) started for this repository."""
+def _kind(argv):
+    if not argv:
+        return None
+    exe = Path(argv[0]).name.lower()
+    if exe in ("node", "nodejs") and len(argv) > 1:
+        return _kind(argv[1:])
+    if exe == "claude" and "-p" in argv and "--json-schema" in argv:
+        return "claude"
+    if exe in ("codex", "codex.js") and "exec" in argv and "--output-schema" in argv:
+        return "codex"
+    if exe in ("sh", "bash", "dash") and argv[1:3] == ["-c", CFG.check]:
+        return "check"
+    if exe == "issuepilot" and argv[1:2] == ["run"]:
+        return "loop"
+    if exe.startswith("python"):
+        if argv[1:4] == ["-m", "issuepilot", "run"]:
+            return "loop"
+        if len(argv) > 2 and Path(argv[1]).name == "issuepilot" and argv[2] == "run":
+            return "loop"
+    return None
+
+
+def _linux_processes():
     found = []
     for pid in filter(str.isdigit, os.listdir("/proc")):
         try:
             argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
             argv = [a.decode(errors="replace") for a in argv if a]
-            if not argv:
+            kind = _kind(argv)
+            if kind is None:
                 continue
-            exe = Path(argv[0]).name
             cwd = os.readlink(f"/proc/{pid}/cwd")
-            if exe == "claude" and "-p" in argv and "--json-schema" in argv:
-                kind = "claude"
-            elif "codex" in exe and "exec" in argv and "--output-schema" in argv:
-                kind = "codex"
-                cwd = argv[argv.index("-C") + 1] if "-C" in argv else cwd
-            elif exe in ("sh", "bash", "dash") and argv[1:2] == ["-c"] and argv[2:3] == [CFG.check]:
-                kind = "check"
-            else:
-                continue
+            if kind == "codex" and "-C" in argv:
+                cwd = str((Path(cwd) / argv[argv.index("-C") + 1]).resolve())
             if not _inside_repo(cwd):
                 continue
-            found.append({"kind": kind, "cwd": cwd, "pid": int(pid),
+            # The comm field may contain spaces or parentheses; PPID follows its final ')'.
+            stat = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            found.append({"kind": kind, "cwd": cwd, "pid": int(pid), "ppid": int(stat[1]),
                           "started": Path(f"/proc/{pid}").stat().st_mtime})
         except (OSError, ValueError, IndexError):
             continue
     return found
 
 
-def loop_alive():
-    for pid in filter(str.isdigit, os.listdir("/proc")):
-        try:
-            argv = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace").split("\0")
-            if any(a.endswith("issuepilot") for a in argv) and "run" in argv \
-                    and _inside_repo(os.readlink(f"/proc/{pid}/cwd")):
-                return True
-        except OSError:
+def _mac_kind(exe, command):
+    """ps arguments are not shell-quoted: use flags for identity and lsof for the exact cwd."""
+    exe = exe.lower()
+    codex = (exe == "codex" and re.match(r"^(?:.*[/])?codex\s+exec\s", command)) or (
+        exe in ("node", "nodejs") and re.match(
+            r"^(?:.*[/])?node(?:js)?\s+(?:.*[/])?codex(?:\.js)?\s+exec\s", command))
+    if codex \
+            and re.search(r"\s--output-schema(?:\s|=)", command):
+        return "codex"
+    if exe == "claude" and re.search(r"\s-p(?:\s|$)", command) and " --json-schema " in command:
+        return "claude"
+    if exe in ("sh", "bash", "dash") and command.partition(" -c ")[2] == CFG.check:
+        return "check"
+    if exe == "issuepilot" and re.match(r"^(?:.*[/])?issuepilot\s+run(?:\s|$)", command):
+        return "loop"
+    if exe.startswith("python") and re.match(
+            r"^(?:.*[/])?python(?:\d+(?:\.\d+)*)?\s+(?:-[uB]\s+)*"
+            r"(?:-m\s+issuepilot|(?:.*[/])?issuepilot)\s+run(?:\s|$)", command, re.I):
+        return "loop"
+    return None
+
+
+def _elapsed_seconds(value):
+    days, sep, clock = value.rpartition("-")
+    parts = [int(p) for p in clock.split(":")]
+    if len(parts) not in (2, 3):
+        raise ValueError("invalid ps elapsed time")
+    seconds = int(days) * 86400 if sep else 0
+    return seconds + sum(n * 60 ** i for i, n in enumerate(reversed(parts)))
+
+
+def _macos_processes():
+    # Inspect only this user's processes, and never print or retain their command lines.
+    p = subprocess.run(["ps", "-U", str(os.getuid()), "-ww", "-o", "pid=,ppid=,etime=,ucomm=,command="],
+                       text=True, capture_output=True, timeout=5, check=True)
+    candidates = {}
+    now = time.time()
+    for line in p.stdout.splitlines():
+        fields = line.split(None, 4)
+        if len(fields) != 5:
             continue
-    return False
+        pid, ppid, elapsed, exe, command = fields
+        kind = _mac_kind(exe, command)
+        if kind is None:
+            continue
+        try:
+            candidates[int(pid)] = {"pid": int(pid), "ppid": int(ppid), "kind": kind,
+                                    "started": now - _elapsed_seconds(elapsed)}
+        except ValueError:
+            continue
+    if not candidates:
+        return []
+    p = subprocess.run(["lsof", "-a", "-p", ",".join(map(str, candidates)), "-d", "cwd", "-Fn"],
+                       text=True, capture_output=True, timeout=5)
+    # lsof may return 1 when a candidate exits during the scan; accept any records it did return.
+    if p.returncode and not p.stdout.strip():
+        raise OSError("process cwd lookup unavailable")
+    found, pid = [], None
+    for line in p.stdout.splitlines():
+        if line.startswith("p"):
+            pid = int(line[1:]) if line[1:].isdigit() else None
+        elif line.startswith("n") and pid in candidates and _inside_repo(line[1:]):
+            found.append({**candidates[pid], "cwd": line[1:]})
+    return found
+
+
+def process_snapshot():
+    """A shared read-only snapshot for the loop indicator and agent panels."""
+    try:
+        if sys.platform == "darwin":
+            processes = _macos_processes()
+        elif sys.platform.startswith("linux"):
+            processes = _linux_processes()
+        else:
+            raise OSError("process monitoring unsupported")
+    except (OSError, subprocess.SubprocessError):
+        return {"agents": [], "alive": None, "unavailable": True}
+    # The npm Codex launcher and its native child represent a single agent.
+    parents = {p["ppid"] for p in processes for parent in processes
+               if parent["pid"] == p["ppid"] and parent["kind"] == p["kind"] and parent["cwd"] == p["cwd"]}
+    agents = [{k: v for k, v in p.items() if k != "ppid"}
+              for p in processes if p["kind"] != "loop" and p["pid"] not in parents]
+    return {"agents": agents, "alive": any(p["kind"] == "loop" for p in processes), "unavailable": False}
+
+
+def running_agents():
+    return process_snapshot()["agents"]
+
+
+def loop_alive():
+    return process_snapshot()["alive"]
 
 
 # ---------- transcripts ----------
@@ -386,13 +486,14 @@ def issue_of(a):
     return int(m.group(1)) if m else None
 
 
-def render_agents(agents, transcripts, height):
+def render_agents(agents, transcripts, height, unavailable=False):
     """One panel per issue lane (several when lanes run in parallel), sharing the height."""
     lanes = {}
     for a in agents:
         lanes.setdefault(issue_of(a), []).append(a)
     if not lanes:
-        return [Panel(Text(tr("no_agents"), style="dim"), title=tr("agent"), border_style="dim")]
+        return [Panel(Text(tr("process_unavailable" if unavailable else "no_agents"), style="dim"),
+                      title=tr("agent"), border_style="dim")]
     each = max(height // len(lanes), 8)
     return [render_agent(group, transcripts, each) for _, group in sorted(lanes.items(), key=lambda x: x[0] or 0)]
 
@@ -452,19 +553,22 @@ def render_log(n):
     return Panel(body or Text(tr("no_log"), style="dim"), title=tr("log"), border_style="dim")
 
 
-def render(gh, agents, transcripts, size):
+def render(gh, agents, transcripts, size, processes=None):
     _, height = size
-    alive = loop_alive()
+    processes = process_snapshot() if processes is None else processes
+    alive = processes["alive"]
     head = Text()
     head.append(tr("title", repo=CFG.root.name), style="bold reverse")
     head.append(f"  {datetime.now():%H:%M:%S}  ")
-    head.append(tr("alive") if alive else tr("dead"), style="green" if alive else "bold red")
+    head.append(tr("process_unknown") if alive is None else tr("alive") if alive else tr("dead"),
+                style="yellow" if alive is None else "green" if alive else "bold red")
     head.append("  " + tr("updated", s=int(time.time() - gh.at)), style="red" if gh.error else "dim")
     active = {issue_of(a) for a in agents} - {None}
     issues = render_issues(gh, active)
     log_rows = 8
     agent_rows = max(height - (len(gh.issues) + 4) - log_rows - 4, 8)
-    return Group(head, issues, *render_agents(agents, transcripts, agent_rows), render_log(log_rows - 2))
+    return Group(head, issues, *render_agents(agents, transcripts, agent_rows, processes["unavailable"]),
+                 render_log(log_rows - 2))
 
 
 def main(cfg):
@@ -477,7 +581,8 @@ def main(cfg):
         with Live(console=console, screen=True, auto_refresh=False) as live:
             while True:
                 gh.refresh()
-                agents = running_agents()
+                processes = process_snapshot()
+                agents = processes["agents"]
                 for a in agents:
                     if a["kind"] == "check":
                         continue
@@ -491,7 +596,7 @@ def main(cfg):
                 for pid in list(transcripts):
                     if pid not in {a["pid"] for a in agents}:
                         del transcripts[pid]
-                live.update(render(gh, agents, transcripts, console.size), refresh=True)
+                live.update(render(gh, agents, transcripts, console.size, processes), refresh=True)
                 time.sleep(LOCAL_REFRESH)
     except KeyboardInterrupt:
         pass

@@ -140,7 +140,7 @@ auto_ready = false   # 新 issue 打 agent:planned，等你 `issuepilot approve 
 ## 已知限制
 
 - 所有 GitHub 操作都用你的账号，所以 reviewer 不能正式 Approve 或 Request changes，审查结论用评论和标签表示。要正式审批，需要单独的机器人账号或 GitHub App。
-- 看板读取 `/proc`，所以只有在 Linux 上能显示正在运行的 agent。
+- 看板在 Linux 上读取 `/proc`，在 macOS 上使用系统自带的 `ps` 和 `lsof` 检测当前用户的进程。检测不可用时显示“进程状态未知”，仍保留任务状态和日志；Codex 启动器和原生子进程合并显示为一个 agent。
 - issuepilot 靠轮询 GitHub，不用 webhook。
 
 ## 开发

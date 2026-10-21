@@ -168,7 +168,7 @@ Codex session transcripts), and the end of `.issuepilot/loop.log`. It is read-on
 
 - All GitHub actions use your account, so the reviewer cannot formally approve or request changes. The verdict
   is a comment plus a label. A separate bot account or GitHub App would allow formal reviews.
-- The dashboard reads `/proc`, so it shows running agents on Linux only.
+- The dashboard reads `/proc` on Linux and uses the system `ps` and `lsof` tools on macOS to inspect the current user's processes. If detection is unavailable, it shows an unknown process status while keeping issue states and logs visible. A Codex launcher and its native child are shown as one agent.
 - issuepilot polls GitHub; it does not use webhooks.
 
 ## Development
